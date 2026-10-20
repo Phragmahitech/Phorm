@@ -5,6 +5,8 @@
 #include "WavetableGenerator.h"
 #include "PhormSynth.h"
 
+#include <unordered_set>
+
 /**
     Phorm : générateur de wavetables aléatoires pour Serum.
 
@@ -69,7 +71,7 @@ public:
     //==========================================================================
     // Générateur (fil de l'interface)
 
-    /** Nouvelle table du style choisi, nouvelle graine. */
+    /** Nouvelle table du style choisi, nouvelle graine (32 bits, jamais une graine déjà tirée dans ce projet). */
     void generate();
     /** Même chose avec une graine donnée (tests). */
     void generateWithSeed (uint32_t seed);
@@ -83,10 +85,14 @@ public:
     void setBright (float bright);
     void setMorph (int morph);
     void setFrames (int frames);
+    void setSymmetry (int symmetry);
 
     phorm::TableSettings getCurrentSettings() const;
     int getHistoryIndex() const;
     int getHistorySize() const;
+    /** Nombre de graines déjà tirées dans ce projet. */
+    int getUsedSeedCount() const;
+    bool wasSeedUsed (uint32_t seed) const;
 
     /** Dernière table fabriquée (pour l'afficheur) ; peut être en retard d'un instant sur les réglages. */
     std::shared_ptr<const phorm::Wavetable> getDisplayTable() const;
@@ -140,6 +146,7 @@ private:
     mutable juce::CriticalSection stateLock;
     std::vector<phorm::TableSettings> history;
     int historyIndex = 0;
+    std::unordered_set<uint32_t> usedSeeds;     // toutes les graines tirées dans ce projet (gardées avec lui)
     int styleChoice = styleRandom;
 
     // Tables : `pending` (prête), `live` (jouée), `retired` (à libérer hors du fil audio)

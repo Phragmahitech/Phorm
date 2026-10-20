@@ -31,6 +31,7 @@ namespace phorm
 
     enum Style : int { styleAdditive, styleFormant, styleFm, styleFold, styleSync, styleDigital, styleChaos, numStyles };
     enum Morph : int { morphSmooth, morphLinear, morphStep, numMorphs };
+    enum Symmetry : int { symmetryOff, symmetryMirror, symmetryFlip, numSymmetries };
 
     inline const char* styleName (int s)
     {
@@ -42,6 +43,12 @@ namespace phorm
     {
         static const char* names[numStyles] = { "additive", "formant", "fm", "fold", "sync", "digital", "chaos" };
         return names[std::clamp (s, 0, numStyles - 1)];
+    }
+
+    inline const char* symmetryName (int m)
+    {
+        static const char* names[numSymmetries] = { "OFF", "MIRROR", "FLIP" };
+        return names[std::clamp (m, 0, numSymmetries - 1)];
     }
 
     inline const char* morphName (int m)
@@ -191,11 +198,12 @@ namespace phorm
         int frames = 64;
         int morph = morphSmooth;
         float bright = 0.75f;      // 0 = 16 harmoniques, 1 = 1023
+        int symmetry = symmetryOff;
 
         bool operator== (const TableSettings& o) const noexcept
         {
             return style == o.style && seed == o.seed && frames == o.frames && morph == o.morph
-                && std::abs (bright - o.bright) < 1.0e-6f;
+                && symmetry == o.symmetry && std::abs (bright - o.bright) < 1.0e-6f;
         }
         bool operator!= (const TableSettings& o) const noexcept { return ! (*this == o); }
 
@@ -205,6 +213,7 @@ namespace phorm
             s.style = std::clamp (s.style, 0, numStyles - 1);
             s.frames = std::clamp (s.frames, minFrames, maxFrames);
             s.morph = std::clamp (s.morph, 0, numMorphs - 1);
+            s.symmetry = std::clamp (s.symmetry, 0, numSymmetries - 1);
             s.bright = std::isfinite (s.bright) ? std::clamp (s.bright, 0.0f, 1.0f) : 0.75f;
             return s;
         }
@@ -235,6 +244,8 @@ namespace phorm
         if (brightPct != 75)     name += "-b" + std::to_string (brightPct);
         if (s.morph == morphLinear) name += "-lin";
         if (s.morph == morphStep)   name += "-step";
+        if (s.symmetry == symmetryMirror) name += "-mir";
+        if (s.symmetry == symmetryFlip)   name += "-flip";
         return name;
     }
 
@@ -744,6 +755,32 @@ namespace phorm
         return table;
     }
 
+    /**
+        Symétrie de chaque frame, appliquée après la génération (même graine = même matière de départ).
+        On garde la première moitié de la période :
+        - MIRROR : la seconde moitié est son reflet (y[N - n] = y[n]), forme symétrique autour du centre ;
+        - FLIP : la seconde moitié est son inverse (y[n + N/2] = -y[n]), harmoniques impaires seulement.
+        La limite de bande et la normalisation viennent ensuite (fromFrames).
+    */
+    inline void applySymmetry (detail::Frames& frames, int symmetry)
+    {
+        constexpr int half = frameSize / 2;
+
+        for (auto& f : frames)
+        {
+            if (symmetry == symmetryMirror)
+            {
+                for (int n = 1; n < half; ++n)
+                    f[(size_t) (frameSize - n)] = f[(size_t) n];
+            }
+            else if (symmetry == symmetryFlip)
+            {
+                for (int n = 0; n < half; ++n)
+                    f[(size_t) (n + half)] = -f[(size_t) n];
+            }
+        }
+    }
+
     /** Fabrique la table décrite par les réglages. */
     inline std::unique_ptr<Wavetable> build (const TableSettings& in)
     {
@@ -754,7 +791,8 @@ namespace phorm
         std::vector<double> t ((size_t) s.frames);
         for (int j = 0; j < s.frames; ++j) t[(size_t) j] = (double) j / (double) (s.frames - 1);
 
-        const auto frames = detail::generate (s.style, r, t, s.morph, H);
+        auto frames = detail::generate (s.style, r, t, s.morph, H);
+        applySymmetry (frames, s.symmetry);
         return fromFrames (s, frames, H);
     }
 

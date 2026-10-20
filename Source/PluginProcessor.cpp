@@ -355,7 +355,18 @@ void PhormAudioProcessor::pushHistory (const phorm::TableSettings& s)
 
 void PhormAudioProcessor::generate()
 {
-    generateWithSeed ((uint32_t) juce::Random::getSystemRandom().nextInt (juce::Range<int> (100000, 1000000)));
+    // Graine sur 32 bits (4,3 milliards de valeurs), jamais une graine déjà tirée dans ce projet
+    auto& random = juce::Random::getSystemRandom();
+    uint32_t seed = 0;
+
+    for (int attempt = 0; attempt < 1000; ++attempt)
+    {
+        seed = (uint32_t) random.nextInt64();
+        if (seed != 0 && ! wasSeedUsed (seed))
+            break;
+    }
+
+    generateWithSeed (seed);
 }
 
 void PhormAudioProcessor::generateWithSeed (uint32_t seed)
@@ -367,6 +378,7 @@ void PhormAudioProcessor::generateWithSeed (uint32_t seed)
         s = history[(size_t) historyIndex];
         s.seed = seed;
         s.style = styleChoice == styleRandom ? phorm::randomStyleFor (seed) : styleChoice;
+        usedSeeds.insert (seed);
         pushHistory (s);
         s = history[(size_t) historyIndex];
     }
@@ -413,6 +425,7 @@ void PhormAudioProcessor::updateCurrent (const std::function<void (phorm::TableS
 void PhormAudioProcessor::setBright (float bright)   { updateCurrent ([bright] (phorm::TableSettings& s) { s.bright = bright; }); }
 void PhormAudioProcessor::setMorph (int morph)       { updateCurrent ([morph] (phorm::TableSettings& s) { s.morph = morph; }); }
 void PhormAudioProcessor::setFrames (int frames)     { updateCurrent ([frames] (phorm::TableSettings& s) { s.frames = frames; }); }
+void PhormAudioProcessor::setSymmetry (int symmetry) { updateCurrent ([symmetry] (phorm::TableSettings& s) { s.symmetry = symmetry; }); }
 
 int PhormAudioProcessor::getStyleChoice() const
 {
@@ -442,6 +455,25 @@ int PhormAudioProcessor::getHistorySize() const
 {
     const juce::ScopedLock lock (stateLock);
     return (int) history.size();
+}
+
+int PhormAudioProcessor::getUsedSeedCount() const
+{
+    const juce::ScopedLock lock (stateLock);
+    return (int) usedSeeds.size();
+}
+
+bool PhormAudioProcessor::wasSeedUsed (uint32_t seed) const
+{
+    const juce::ScopedLock lock (stateLock);
+    if (usedSeeds.count (seed) > 0)
+        return true;
+
+    for (const auto& s : history)
+        if (s.seed == seed)
+            return true;
+
+    return false;
 }
 
 //==============================================================================
@@ -536,6 +568,7 @@ juce::ValueTree PhormAudioProcessor::settingsToTree (const phorm::TableSettings&
     t.setProperty ("frames", s.frames, nullptr);
     t.setProperty ("morph", s.morph, nullptr);
     t.setProperty ("bright", (double) s.bright, nullptr);
+    t.setProperty ("symmetry", s.symmetry, nullptr);
     return t;
 }
 
@@ -554,6 +587,7 @@ phorm::TableSettings PhormAudioProcessor::treeToSettings (const juce::ValueTree&
     s.frames = (int) t.getProperty ("frames", s.frames);
     s.morph = (int) t.getProperty ("morph", s.morph);
     s.bright = (float) (double) t.getProperty ("bright", (double) s.bright);
+    s.symmetry = (int) t.getProperty ("symmetry", s.symmetry);
     return s.sanitised();
 }
 
@@ -569,6 +603,15 @@ void PhormAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         generator.setProperty ("index", historyIndex, nullptr);
         for (const auto& s : history)
             generator.appendChild (settingsToTree (s), nullptr);
+
+        // Graines déjà tirées, triées, en hexadécimal
+        std::vector<uint32_t> seeds (usedSeeds.begin(), usedSeeds.end());
+        std::sort (seeds.begin(), seeds.end());
+        juce::String text;
+        text.preallocateBytes (seeds.size() * 9);
+        for (auto seed : seeds)
+            text << juce::String::toHexString ((juce::int64) seed) << ' ';
+        generator.setProperty ("usedSeeds", text.trimEnd(), nullptr);
     }
     state.appendChild (generator, nullptr);
 
@@ -590,6 +633,14 @@ void PhormAudioProcessor::setStateInformation (const void* data, int sizeInBytes
     if (! generator.isValid())
         return;
 
+    std::unordered_set<uint32_t> restoredSeeds;
+    for (const auto& token : juce::StringArray::fromTokens (generator.getProperty ("usedSeeds").toString(), " ", ""))
+    {
+        const auto value = token.getHexValue64();
+        if (token.isNotEmpty() && value > 0 && value <= (juce::int64) 0xffffffffu)
+            restoredSeeds.insert ((uint32_t) value);
+    }
+
     std::vector<phorm::TableSettings> restored;
     for (const auto& child : generator)
         if (child.hasType ("Table"))
@@ -609,9 +660,13 @@ void PhormAudioProcessor::setStateInformation (const void* data, int sizeInBytes
             if (choiceText == phorm::styleSlug (i))
                 styleChoice = i;
 
+        usedSeeds = std::move (restoredSeeds);
+
         if (! restored.empty())
         {
             history = std::move (restored);
+            for (const auto& s : history)     // projets v0.1.0 : pas de liste, on reprend l'historique
+                usedSeeds.insert (s.seed);
             historyIndex = juce::jlimit (0, (int) history.size() - 1, (int) generator.getProperty ("index", (int) history.size() - 1));
         }
 

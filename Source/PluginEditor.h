@@ -103,6 +103,7 @@ public:
     juce::TextButton& getStyleButton (int i) noexcept       { return styleButtons[i]; }
     juce::TextButton& getMorphButton (int i) noexcept       { return morphButtons[i]; }
     juce::TextButton& getFramesButton (int i) noexcept      { return framesButtons[i]; }
+    juce::TextButton& getSymmetryButton (int i) noexcept    { return symmetryButtons[i]; }
     juce::Slider& getBrightSlider() noexcept                { return brightSlider; }
     void refreshNow()                                       { timerCallback(); }
 
@@ -130,6 +131,7 @@ private:
     juce::TextButton styleButtons[phorm::numStyles + 1];
     juce::Slider brightSlider;
     juce::TextButton morphButtons[phorm::numMorphs];
+    juce::TextButton symmetryButtons[phorm::numSymmetries];
     juce::TextButton framesButtons[5];
     Knob position, scan, rate, attack, release, level;
     juce::TextButton previousButton, generateButton { "GENERATE" }, nextButton;

@@ -315,12 +315,22 @@ PhormFacade::PhormFacade (PhormAudioProcessor& p)
     addAndMakeVisible (brightSlider);
 
     // MORPH, FRAMES (table en cours)
-    const float morphWidth = (rightWidth - 12) / 3.0f;
+    // MORPH (moitié gauche) et SYMMETRY (moitié droite), même ligne
+    constexpr float groupGap = 12.0f;
+    const float groupWidth = (rightWidth - groupGap) * 0.5f;
+    const float smallWidth = (groupWidth - 8.0f) / 3.0f;
     for (int i = 0; i < phorm::numMorphs; ++i)
     {
         morphButtons[i].setButtonText (phorm::morphName (i));
-        setupSegment (morphButtons[i], juce::Rectangle<float> (rightX + i * (morphWidth + 6.0f), 280.0f, morphWidth, 34.0f).toNearestInt());
+        setupSegment (morphButtons[i], juce::Rectangle<float> (rightX + i * (smallWidth + 4.0f), 280.0f, smallWidth, 34.0f).toNearestInt());
         morphButtons[i].onClick = [this, i] { audioProcessor.setMorph (i); refreshControls(); };
+    }
+
+    for (int i = 0; i < phorm::numSymmetries; ++i)
+    {
+        symmetryButtons[i].setButtonText (phorm::symmetryName (i));
+        setupSegment (symmetryButtons[i], juce::Rectangle<float> (rightX + groupWidth + groupGap + i * (smallWidth + 4.0f), 280.0f, smallWidth, 34.0f).toNearestInt());
+        symmetryButtons[i].onClick = [this, i] { audioProcessor.setSymmetry (i); refreshControls(); };
     }
 
     const float framesWidth = (rightWidth - 24) / 5.0f;
@@ -470,6 +480,9 @@ void PhormFacade::refreshControls()
     for (int i = 0; i < phorm::numMorphs; ++i)
         morphButtons[i].setToggleState (settings.morph == i, juce::dontSendNotification);
 
+    for (int i = 0; i < phorm::numSymmetries; ++i)
+        symmetryButtons[i].setToggleState (settings.symmetry == i, juce::dontSendNotification);
+
     for (int i = 0; i < 5; ++i)
         framesButtons[i].setToggleState (settings.frames == PhormAudioProcessor::frameChoices[i], juce::dontSendNotification);
 
@@ -585,11 +598,12 @@ void PhormFacade::paint (juce::Graphics& g)
     const auto s = shownSettings;
     const auto table = audioProcessor.getDisplayTable();
     const bool building = table == nullptr || table->settings != s.sanitised();
-    drawLabel (g, juce::String (phorm::styleName (s.style)) + dot + juce::String ((int) s.seed), lf.title (14.0f, 0.34f),
+    drawLabel (g, juce::String (phorm::styleName (s.style)) + dot + juce::String ((juce::int64) s.seed), lf.title (14.0f, 0.34f),
                juce::Colour (0xfff4f4f4), { 0.0f, 80.0f, (float) leftWidth, 22.0f }, juce::Justification::centred);
 
     const int harmonics = phorm::harmonicsForBright (s.bright);
     drawLabel (g, juce::String (s.frames) + " FRAMES" + dot + juce::String (harmonics) + " HARMONICS" + dot + phorm::morphName (s.morph)
+                   + (s.symmetry != phorm::symmetryOff ? dot + phorm::symmetryName (s.symmetry) : juce::String())
                    + dot + juce::String (shownIndex + 1) + " / " + juce::String (shownSize),
                label10, LF::dim(), { 0.0f, 104.0f, (float) leftWidth, 16.0f }, juce::Justification::centred);
 
@@ -616,8 +630,9 @@ void PhormFacade::paint (juce::Graphics& g)
     drawLabel (g, "FULL", label10, LF::label(), { rx, 238.0f, rw, 14.0f }, juce::Justification::centredRight);
 
     drawLabel (g, "MORPH", label10, LF::ink(), { rx, 262.0f, rw, 14.0f }, juce::Justification::centredLeft);
+    drawLabel (g, "SYMMETRY", label10, LF::ink(), { rx + (rw + 12.0f) * 0.5f, 262.0f, rw, 14.0f }, juce::Justification::centredLeft);
     drawLabel (g, "FRAMES", label10, LF::ink(), { rx, 328.0f, rw, 14.0f }, juce::Justification::centredLeft);
-    drawLabel (g, "BRIGHT, MORPH, FRAMES: THIS TABLE", label9, LF::faint(), { rx, 262.0f, rw, 14.0f }, juce::Justification::centredRight);
+    drawLabel (g, "BRIGHT TO FRAMES: THIS TABLE", label9, LF::faint(), { rx, 328.0f, rw, 14.0f }, juce::Justification::centredRight);
 
     g.setColour (juce::Colour (0xff1a1a1a));
     g.fillRect (rx, 396.0f, rw, 1.0f);

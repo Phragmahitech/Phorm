@@ -124,6 +124,12 @@ int main()
         CHECK (fileStem (s) == "fm-123456-256f-b40-step", "%s", fileStem (s).c_str());
         s.morph = morphLinear; s.frames = 64; s.bright = 0.75f; s.style = styleChaos;
         CHECK (fileStem (s) == "chaos-123456-lin", "%s", fileStem (s).c_str());
+        s.symmetry = symmetryMirror;
+        CHECK (fileStem (s) == "chaos-123456-lin-mir", "%s", fileStem (s).c_str());
+        s.symmetry = symmetryFlip; s.morph = morphSmooth; s.seed = 4294967295u;
+        CHECK (fileStem (s) == "chaos-4294967295-flip", "%s", fileStem (s).c_str());
+        s.symmetry = 9;
+        CHECK (s.sanitised().symmetry == symmetryFlip, "symétrie bornée");
     }
 
     std::printf ("Harmoniques selon BRIGHT\n");
@@ -219,6 +225,89 @@ int main()
         double diff = 0.0;
         for (int n = 0; n < frameSize; ++n) diff = std::max (diff, (double) std::abs (a->frame (0)[n] - b->frame (0)[n]));
         CHECK (diff < 1.0e-5, "première frame différente selon le nombre de frames (%g)", diff);
+    }
+
+    std::printf ("Symétrie\n");
+    {
+        int mirrorOk = 0, flipOk = 0, total = 0;
+        for (int style = 0; style < numStyles; ++style)
+            for (int v = 0; v < 3; ++v)
+            {
+                TableSettings s;
+                s.style = style; s.seed = 600000u + (uint32_t) (style * 7 + v); s.frames = 32;
+                s.bright = v == 0 ? 1.0f : v == 1 ? 0.5f : 0.1f;
+                ++total;
+
+                const auto plain = build (s);
+                s.symmetry = symmetryMirror;
+                const auto mirror = build (s);
+                s.symmetry = symmetryFlip;
+                const auto flip = build (s);
+
+                // Une table déjà symétrique (harmoniques en phase) reste telle quelle avec MIRROR
+                double plainAsym = 0.0;
+                for (int f = 0; f < 32; ++f)
+                    for (int n = 1; n < frameSize; ++n)
+                        plainAsym = std::max (plainAsym, (double) std::abs (plain->frame (f)[n] - plain->frame (f)[frameSize - n]));
+                if (plainAsym > 1.0e-3)
+                    CHECK (plain->frames != mirror->frames, "%s : MIRROR ne change rien", styleName (style));
+                CHECK (plain->frames != flip->frames, "%s : FLIP ne change rien", styleName (style));
+
+                // MIRROR : y[N - n] = y[n] ; FLIP : y[n + N/2] = -y[n] et aucune harmonique paire
+                double mirrorErr = 0.0, flipErr = 0.0, evenEnergy = 0.0, allEnergy = 1.0e-30;
+                bool finite = true;
+                for (int f = 0; f < 32; ++f)
+                {
+                    const float* m = mirror->frame (f);
+                    const float* x = flip->frame (f);
+                    for (int n = 1; n < frameSize; ++n)
+                        mirrorErr = std::max (mirrorErr, (double) std::abs (m[n] - m[frameSize - n]));
+                    for (int n = 0; n < frameSize / 2; ++n)
+                        flipErr = std::max (flipErr, (double) std::abs (x[n] + x[n + frameSize / 2]));
+                    for (int n = 0; n < frameSize; ++n)
+                        finite = finite && std::isfinite (m[n]) && std::isfinite (x[n]);
+
+                    std::vector<double> d (x, x + frameSize);
+                    std::vector<Fft::Complex> half ((size_t) frameSize / 2 + 1);
+                    fft().forwardReal (d.data(), half.data());
+                    for (int k = 1; k <= frameSize / 2; ++k)
+                    {
+                        allEnergy += std::norm (half[(size_t) k]);
+                        if (k % 2 == 0) evenEnergy += std::norm (half[(size_t) k]);
+                    }
+                }
+
+                CHECK (finite, "%s : valeurs non finies", styleName (style));
+                mirrorOk += mirrorErr < 1.0e-4 ? 1 : 0;
+                flipOk += (flipErr < 1.0e-4 && evenEnergy / allEnergy < 1.0e-9) ? 1 : 0;
+                CHECK (mirrorErr < 1.0e-4, "%s %u : MIRROR non symétrique (%g)", styleName (style), s.seed, mirrorErr);
+                CHECK (flipErr < 1.0e-4, "%s %u : FLIP non antisymétrique (%g)", styleName (style), s.seed, flipErr);
+                CHECK (evenEnergy / allEnergy < 1.0e-9, "%s %u : FLIP avec harmoniques paires (%g)", styleName (style), s.seed, evenEnergy / allEnergy);
+
+                // Crêtes, continu : mêmes règles que sans symétrie
+                for (const auto* t : { mirror.get(), flip.get() })
+                    for (int f = 0; f < 32; ++f)
+                    {
+                        float peak = 0.0f; double mean = 0.0;
+                        for (int n = 0; n < frameSize; ++n) { peak = std::max (peak, std::abs (t->frame (f)[n])); mean += t->frame (f)[n]; }
+                        CHECK (std::abs (peak - 0.95f) < 1.0e-3f && std::abs (mean / frameSize) < 1.0e-5, "crête / continu");
+                    }
+
+                // Versions par octave : symétrie gardée
+                const float* lv = mirror->levelFrame (4, 7);
+                double lvErr = 0.0;
+                for (int n = 1; n < frameSize; ++n) lvErr = std::max (lvErr, (double) std::abs (lv[n] - lv[frameSize - n]));
+                CHECK (lvErr < 1.0e-4, "version par octave non symétrique (%g)", lvErr);
+            }
+        std::printf ("  MIRROR %d / %d, FLIP %d / %d\n", mirrorOk, total, flipOk, total);
+
+        // Même graine : la symétrie part de la même matière (première moitié inchangée avant normalisation)
+        TableSettings s;
+        s.style = styleDigital; s.seed = 31337; s.frames = 8; s.bright = 1.0f;
+        const auto a = build (s);
+        s.symmetry = symmetryFlip;
+        const auto b = build (s);
+        CHECK (a->frames.size() == b->frames.size(), "taille");
     }
 
     std::printf ("Versions par octave\n");

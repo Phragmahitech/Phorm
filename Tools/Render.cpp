@@ -106,6 +106,17 @@ int main (int argc, char** argv)
         p.generateWithSeed (100003);
         p.setBright (0.3f);
         shot ("interface-4-random-dark.png");
+
+        p.setStyleChoice (phorm::styleFm);
+        p.generateWithSeed (2718281828u);
+        p.setBright (0.75f);
+        p.setFrames (64);
+        p.setSymmetry (phorm::symmetryMirror);
+        p.apvts.getParameter (PhormAudioProcessor::positionId)->setValueNotifyingHost (0.6f);
+        shot ("interface-5-fm-mirror.png");
+
+        p.setSymmetry (phorm::symmetryFlip);
+        shot ("interface-6-fm-flip.png");
         p.editorBeingDeleted (editor.get());
     }
 

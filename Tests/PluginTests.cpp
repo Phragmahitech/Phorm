@@ -4,6 +4,7 @@
 #include "../Source/PluginEditor.h"
 
 #include <cstdio>
+#include <unordered_set>
 
 static int failures = 0, checks = 0;
 
@@ -159,7 +160,8 @@ int main()
         CHECK (p.getCurrentSettings().style == phorm::randomStyleFor (555555), "style au hasard");
         p.generate();
         CHECK (p.getHistorySize() == 4, "historique %d", p.getHistorySize());
-        CHECK (p.getCurrentSettings().seed >= 100000u && p.getCurrentSettings().seed < 1000000u, "graine %u", p.getCurrentSettings().seed);
+        CHECK (p.getCurrentSettings().seed != 0u, "graine nulle");
+        CHECK (p.getUsedSeedCount() == 3, "%d graines tirées", p.getUsedSeedCount());
 
         CHECK (p.stepHistory (-1) && p.getCurrentSettings().seed == 555555u, "retour en arrière");
         CHECK (p.stepHistory (-2) && p.getCurrentSettings() == first, "retour au début");
@@ -178,6 +180,62 @@ int main()
         CHECK (settle (p), "table pas fabriquée après une rafale");
     }
 
+    std::printf ("Graines : 32 bits, jamais deux fois\n");
+    {
+        PhormAudioProcessor p;
+        std::unordered_set<uint32_t> seen;
+        int above = 0;
+        bool unique = true;
+        for (int i = 0; i < 5000; ++i)
+        {
+            p.generate();
+            const auto seed = p.getCurrentSettings().seed;
+            unique = unique && seen.insert (seed).second && seed != 0u;
+            above += seed > 1000000u ? 1 : 0;
+        }
+        CHECK (unique, "graine tirée deux fois");
+        CHECK (p.getUsedSeedCount() == 5000, "%d graines", p.getUsedSeedCount());
+        CHECK (above > 4950, "graines pas réparties sur 32 bits (%d / 5000 au-dessus d'un million)", above);
+        CHECK (p.getHistorySize() == PhormAudioProcessor::maxHistory, "historique");
+
+        // Les graines tirées suivent le projet, même celles sorties de l'historique
+        juce::MemoryBlock state;
+        p.getStateInformation (state);
+        PhormAudioProcessor q;
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        CHECK (q.getUsedSeedCount() == 5000, "%d graines rappelées", q.getUsedSeedCount());
+        bool allKnown = true;
+        for (auto seed : seen) allKnown = allKnown && q.wasSeedUsed (seed);
+        CHECK (allKnown, "graine oubliée après rappel");
+        CHECK (state.getSize() < 200000, "état trop gros (%d octets)", (int) state.getSize());
+
+        // Grande graine : nom de fichier et affichage
+        phorm::TableSettings s;
+        s.style = phorm::styleFm; s.seed = 4294967295u;
+        CHECK (phorm::fileStem (s) == "fm-4294967295", "%s", phorm::fileStem (s).c_str());
+        q.generateWithSeed (4000000000u);
+        juce::MemoryBlock big;
+        q.getStateInformation (big);
+        PhormAudioProcessor r;
+        r.setStateInformation (big.getData(), (int) big.getSize());
+        CHECK (r.getCurrentSettings().seed == 4000000000u, "grande graine mal rappelée");
+        CHECK (settle (r), "table pas faite");
+
+        // Ancien projet (v0.1.0, sans liste de graines) : l'historique compte comme déjà tiré
+        juce::ValueTree t ("Phorm");
+        juce::ValueTree gen ("Generator");
+        juce::ValueTree tab ("Table");
+        tab.setProperty ("style", "fm", nullptr);
+        tab.setProperty ("seed", 482913, nullptr);
+        gen.appendChild (tab, nullptr);
+        t.appendChild (gen, nullptr);
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*t.createXml(), old);
+        PhormAudioProcessor o;
+        o.setStateInformation (old.getData(), (int) old.getSize());
+        CHECK (o.wasSeedUsed (482913u) && o.getUsedSeedCount() == 1, "ancien projet");
+    }
+
     std::printf ("Réglages de la table en cours\n");
     {
         PhormAudioProcessor p;
@@ -189,7 +247,9 @@ int main()
         p.setBright (0.2f);
         p.setFrames (256);
         p.setMorph (phorm::morphStep);
+        p.setSymmetry (phorm::symmetryMirror);
         const auto after = p.getCurrentSettings();
+        CHECK (after.symmetry == phorm::symmetryMirror, "SYMMETRY non pris");
         CHECK (after.seed == before.seed && after.style == before.style, "la table a changé de graine");
         CHECK (after.frames == 256 && after.morph == phorm::morphStep && std::abs (after.bright - 0.2f) < 1.0e-6f, "réglages non pris");
         CHECK (p.getHistorySize() == 2, "un réglage ne doit pas ajouter de table à l'historique");
@@ -205,8 +265,10 @@ int main()
         p.setFrames (100000);
         p.setBright (-3.0f);
         p.setMorph (17);
+        p.setSymmetry (-4);
         const auto clamped = p.getCurrentSettings();
         CHECK (clamped.frames == phorm::maxFrames && clamped.bright == 0.0f && clamped.morph == phorm::numMorphs - 1, "bornes");
+        CHECK (clamped.symmetry == phorm::symmetryOff, "symétrie bornée");
         p.setStyleChoice (99);
         CHECK (p.getStyleChoice() == phorm::numStyles - 1, "choix de style borné");
     }
@@ -253,6 +315,7 @@ int main()
         p.setBright (0.33f);
         p.setFrames (128);
         p.setMorph (phorm::morphLinear);
+        p.setSymmetry (phorm::symmetryFlip);
         p.generateWithSeed (808080);
         p.stepHistory (-1);
         setParam (p, PhormAudioProcessor::positionId, 42.0f);
@@ -428,8 +491,11 @@ int main()
 
             facade.getMorphButton (phorm::morphStep).triggerClick();
             facade.getFramesButton (4).triggerClick();
+            facade.getSymmetryButton (phorm::symmetryMirror).triggerClick();
             juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
             CHECK (p.getCurrentSettings().morph == phorm::morphStep && p.getCurrentSettings().frames == 256, "MORPH / FRAMES");
+            CHECK (p.getCurrentSettings().symmetry == phorm::symmetryMirror, "SYMMETRY");
+            CHECK (facade.getSymmetryButton (phorm::symmetryMirror).getToggleState(), "bouton SYMMETRY non allumé");
 
             facade.getBrightSlider().setValue (30.0, juce::sendNotificationSync);
             CHECK (std::abs (p.getCurrentSettings().bright - 0.3f) < 1.0e-6f, "BRIGHT");
